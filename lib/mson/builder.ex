@@ -1,0 +1,76 @@
+defmodule MSON.Builder do
+  @moduledoc false
+
+  alias MSON.Config
+
+  import MSON.DefineMessage, only: [def_message: 3]
+
+  def define(msgs, %Config{inject: true} = config) do
+    # When injecting, use_in is not available, so we don't need to use @before_compile
+    quote location: :keep do
+      Module.register_attribute __MODULE__, :use_in, accumulate: true
+      import unquote(__MODULE__), only: [use_in: 2]
+
+      @config         unquote(Macro.escape config)
+      @msgs           unquote(Macro.escape msgs)
+      contents = unquote(__MODULE__).generate(@msgs, @config)
+      Module.eval_quoted __MODULE__, contents, [], __ENV__
+    end
+  end
+
+  def define(msgs, config) do
+    quote do
+      Module.register_attribute __MODULE__, :use_in, accumulate: true
+      import unquote(__MODULE__), only: [use_in: 2]
+
+      @config         unquote(Macro.escape config)
+      @msgs           unquote(Macro.escape msgs)
+      @before_compile unquote(__MODULE__)
+    end
+  end
+
+  defmacro __before_compile__(_env) do
+    quote location: :keep do
+      contents = unquote(__MODULE__).generate(@msgs, @config)
+      Module.eval_quoted __MODULE__, contents, [], __ENV__
+    end
+  end
+
+  # Cache use instructions
+  defmacro use_in(module, use_module) do
+    module = :"#{__CALLER__.module}.#{module}"
+    use_module = quote do: use(unquote(use_module))
+    quote location: :keep do
+      @use_in {unquote(module), unquote(Macro.escape(use_module)) }
+    end
+  end
+
+  # Generate code of records (message and enum)
+  def generate(msgs, config) do
+    quotes = for {{item_type, item_name}, fields} <- msgs, item_type in [:msg, :enum], into: [] do
+      case item_type do
+        :msg  -> def_message(item_name, fields, config)
+        _     -> []
+      end
+    end
+
+    # Global defs helper
+    quotes ++ [quote do
+      def defs do
+        unquote(Macro.escape(msgs, unquote: true))
+      end
+    end]
+  end
+
+  # defp is_child_type?(child, type) do
+  #   [parent|_] = child |> Atom.to_string |> String.split(".", parts: :infinity)
+  #   Atom.to_string(type) == parent
+  # end
+
+  # defp fix_ns(name, ns) do
+  #   name_parts = name |> Atom.to_string |> String.split(".", parts: :infinity)
+  #   ns_parts   = ns   |> Atom.to_string |> String.split(".", parts: :infinity)
+  #   module     = name_parts -- ns_parts |> Enum.join |> String.to_atom
+  #   :"#{ns}.#{module}"
+  # end
+end
